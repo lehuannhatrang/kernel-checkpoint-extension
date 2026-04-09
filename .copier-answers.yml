@@ -1,0 +1,16 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v4.5.2
+_src_path: https://github.com/jupyterlab/extension-template
+author_email: lehuannhatrang98@gmail.com
+author_name: Leehun
+has_ai_rules: false
+has_binder: false
+has_settings: false
+kind: frontend
+labextension_name: kernel-checkpoint
+project_short_description: An extension for saving and restoring kernel pod state
+    with jupyter enterprise gateway
+python_name: kernel_checkpoint
+repository: https://github.com/lehuannhatrang/kernel-checkpoint-extension.git
+test: true
+
