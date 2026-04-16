@@ -102,7 +102,7 @@ export namespace CheckpointAPI {
   ): Promise<ICheckpoint> {
     const resp = await makeRequest(
       `checkpoints/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
-      jsonInit('PATCH', data)
+      jsonInit('PUT', data)
     );
     return handleResponse<ICheckpoint>(resp);
   }

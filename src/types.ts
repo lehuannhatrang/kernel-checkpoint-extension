@@ -24,6 +24,12 @@ export interface IResourceRef {
   namespace: string;
 }
 
+export interface ICheckpointMetadata {
+  kernelId: string;
+  kernelName: string;
+  notebookName: string;
+}
+
 export interface ICheckpoint {
   name: string;
   namespace: string;
@@ -31,6 +37,7 @@ export interface ICheckpoint {
   message: string;
   schedule: string;
   buildImage?: boolean;
+  metadata?: ICheckpointMetadata;
   podRef: IPodRef;
   resourceRef: IResourceRef;
   checkpointFiles?: ICheckpointFile[];
@@ -53,11 +60,13 @@ export interface ICreateCheckpointRequest {
   namespace: string;
   kernelId: string;
   buildImage: boolean;
+  metadata: ICheckpointMetadata;
 }
 
 export interface ICheckpointPanelProps {
   namespace: string;
   kernelId: string;
   kernelSpecName: string;
-  onRestore: (checkpointName: string) => Promise<void>;
+  notebookName: string;
+  onRestore: (checkpointName: string, checkpointFilePath: string, containerName: string, kernelId: string) => Promise<void>;
 }

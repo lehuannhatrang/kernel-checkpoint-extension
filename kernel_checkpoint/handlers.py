@@ -75,7 +75,7 @@ class CheckpointListCreateHandler(APIHandler):
 
 
 class CheckpointDetailHandler(APIHandler):
-    """Handles get / delete / patch for a single checkpoint."""
+    """Handles get / delete / put for a single checkpoint."""
 
     @web.authenticated
     async def get(self, namespace, name):
@@ -113,7 +113,7 @@ class CheckpointDetailHandler(APIHandler):
             raise web.HTTPError(502, f"Failed to reach checkpoint API: {e}")
 
     @web.authenticated
-    async def patch(self, namespace, name):
+    async def put(self, namespace, name):
         api_url = _get_api_url()
         if not api_url:
             raise web.HTTPError(500, "CHECKPOINT_API_URL not configured")
@@ -123,7 +123,7 @@ class CheckpointDetailHandler(APIHandler):
         url = f"{api_url}/api/v1/checkpoints/{namespace}/{name}"
         req = httpclient.HTTPRequest(
             url=url,
-            method="PATCH",
+            method="PUT",
             headers={"Content-Type": "application/json"},
             body=json.dumps(body),
         )

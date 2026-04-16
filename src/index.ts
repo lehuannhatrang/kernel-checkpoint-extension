@@ -91,8 +91,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
         const kernelId = kernel.id;
         const kernelSpecName = kernel.name || 'python_kubernetes';
+        const notebookName = panel.title.label || '';
 
-        const onRestore = async (checkpointName: string): Promise<void> => {
+        const onRestore = async (checkpointName: string, checkpointFilePath: string, containerName: string, cpKernelId: string): Promise<void> => {
           const settings = ServerConnection.makeSettings();
           const kernelUrl = URLExt.join(settings.baseUrl, 'api', 'kernels');
 
@@ -104,7 +105,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
               body: JSON.stringify({
                 name: kernelSpecName,
                 env: {
-                  CHECKPOINT_RESTORE_NAME: checkpointName
+                  KERNEL_CHECKPOINT_NAME: checkpointName,
+                  KERNEL_CHECKPOINT_FILE_PATH: checkpointFilePath,
+                  KERNEL_CHECKPOINT_CONTAINER_NAME: containerName,
+                  KERNEL_ID: cpKernelId
                 }
               })
             },
@@ -124,6 +128,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
           namespace: config.namespace,
           kernelId,
           kernelSpecName,
+          notebookName,
           onRestore
         });
 

@@ -2,9 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ICheckpoint, ICheckpointPanelProps } from './types';
 import { CheckpointAPI } from './api';
 
+const CHECKPOINT_REFRESH_INTERVAL = 3;
+
+function mapPhaseDisplay(phase: string): string {
+  return phase === 'Completed' ? 'Ready' : 'Pending';
+}
+
 function PhaseIndicator({ phase }: { phase: string }): JSX.Element {
-  const cls = phase.toLowerCase().replace(/\s+/g, '-');
-  return <span className={`kc-phase kc-phase-${cls}`}>{phase}</span>;
+  const display = mapPhaseDisplay(phase);
+  const cls = display.toLowerCase().replace(/\s+/g, '-');
+  return <span className={`kc-phase kc-phase-${cls}`}>{display}</span>;
 }
 
 function formatDate(iso: string): string {
@@ -12,7 +19,7 @@ function formatDate(iso: string): string {
 }
 
 export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
-  const { namespace, kernelId, onRestore } = props;
+  const { namespace, kernelId, kernelSpecName, notebookName, onRestore } = props;
 
   const [checkpoints, setCheckpoints] = useState<ICheckpoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,17 +65,10 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
     fetchCheckpoints();
   }, [fetchCheckpoints]);
 
-  // Auto-refresh while any checkpoint is still in progress
   useEffect(() => {
-    const pending = checkpoints.some(
-      cp => cp.phase !== 'Completed' && cp.phase !== 'Failed'
-    );
-    if (!pending) {
-      return;
-    }
-    const id = setInterval(fetchCheckpoints, 5000);
+    const id = setInterval(fetchCheckpoints, CHECKPOINT_REFRESH_INTERVAL * 1000);
     return () => clearInterval(id);
-  }, [checkpoints, fetchCheckpoints]);
+  }, [fetchCheckpoints]);
 
   /* ------------------------------------------------------------------ */
   /*  Actions                                                            */
@@ -85,7 +85,12 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
         name: newName.trim(),
         namespace,
         kernelId,
-        buildImage: false
+        buildImage: false,
+        metadata: {
+          kernelId,
+          kernelName: kernelSpecName,
+          notebookName
+        }
       });
       setNewName('');
       setShowCreateForm(false);
@@ -143,7 +148,16 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
     setRestoring(checkpointName);
     setFlash(null);
     try {
-      await onRestore(checkpointName);
+      const detail = await CheckpointAPI.getCheckpoint(namespace, checkpointName);
+      const checkpointFile = detail.checkpointFiles?.[0];
+      if (!checkpointFile?.storagePath) {
+        throw new Error('No checkpoint file path available for this checkpoint');
+      }
+      const cpKernelId = detail.metadata?.kernelId ?? '';
+      if (!cpKernelId) {
+        throw new Error('No kernel ID found in checkpoint metadata');
+      }
+      await onRestore(checkpointName, checkpointFile.storagePath, checkpointFile.containerName, cpKernelId);
       setFlash({
         type: 'success',
         text: `Kernel restored from "${checkpointName}". The kernel is restarting.`
@@ -383,16 +397,12 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
               {expandedDetail === cp.name && detailData && (
                 <div className="kc-detail">
                   <div className="kc-detail-row">
-                    <span className="kc-detail-label">Phase</span>
-                    <span>{detailData.phase}</span>
+                    <span className="kc-detail-label">Status</span>
+                    <span>{mapPhaseDisplay(detailData.phase)}</span>
                   </div>
                   <div className="kc-detail-row">
                     <span className="kc-detail-label">Message</span>
                     <span>{detailData.message}</span>
-                  </div>
-                  <div className="kc-detail-row">
-                    <span className="kc-detail-label">Schedule</span>
-                    <span>{detailData.schedule}</span>
                   </div>
                   {detailData.podRef && (
                     <div className="kc-detail-row">
@@ -439,16 +449,6 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="kc-footer">
-        <button
-          className="kc-btn"
-          onClick={fetchCheckpoints}
-          disabled={loading}
-        >
-          {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
     </div>
   );
 }
