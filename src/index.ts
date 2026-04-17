@@ -15,7 +15,12 @@ import React from 'react';
 
 import { CheckpointPanel } from './checkpoint-panel';
 import { CheckpointAPI } from './api';
-import { ICheckpointPanelProps } from './types';
+import { IBusyCellRecord, ICheckpointPanelProps } from './types';
+import {
+  CellExecutionTracker,
+  RestoreHandler,
+  scanBusyCells
+} from './restore-handler';
 
 /**
  * ReactWidget wrapper that hosts the CheckpointPanel React tree inside a
@@ -45,6 +50,33 @@ const plugin: JupyterFrontEndPlugin<void> = {
   requires: [INotebookTracker],
   activate: (app: JupyterFrontEnd, notebookTracker: INotebookTracker) => {
     console.log('JupyterLab extension kernel-checkpoint is activated!');
+
+    // ── Per-notebook execution tracking ──────────────────────────────
+    //
+    // Each open notebook gets its own CellExecutionTracker that
+    // continuously records in-flight msg_id → execution_count pairs
+    // from the kernel's iopub channel.  At checkpoint time this map
+    // is consulted to capture the execution counts for busy cells.
+
+    const trackerMap = new Map<string, CellExecutionTracker>();
+
+    function ensureTracker(panel: NotebookPanel): CellExecutionTracker {
+      let cellTracker = trackerMap.get(panel.id);
+      if (!cellTracker) {
+        cellTracker = new CellExecutionTracker();
+        trackerMap.set(panel.id, cellTracker);
+      }
+      return cellTracker;
+    }
+
+    function connectTrackerToKernel(panel: NotebookPanel): void {
+      const kernel = panel.sessionContext.session?.kernel;
+      if (kernel) {
+        ensureTracker(panel).connectToKernel(kernel);
+      }
+    }
+
+    // ── Command ──────────────────────────────────────────────────────
 
     app.commands.addCommand(COMMAND_ID, {
       label: 'Saving Points',
@@ -93,7 +125,20 @@ const plugin: JupyterFrontEndPlugin<void> = {
         const kernelSpecName = kernel.name || 'python_kubernetes';
         const notebookName = panel.title.label || '';
 
-        const onRestore = async (checkpointName: string, checkpointFilePath: string, containerName: string, cpKernelId: string): Promise<void> => {
+        // ── Restore callback ─────────────────────────────────────────
+        //
+        // Called by the CheckpointPanel when the user confirms a restore.
+        // Creates a new kernel seeded with the checkpoint environment
+        // variables, switches the notebook session to it, and then
+        // activates the RestoreHandler to catch orphaned iopub messages.
+
+        const onRestore = async (
+          checkpointName: string,
+          checkpointFilePath: string,
+          containerName: string,
+          cpKernelId: string,
+          busyCells: IBusyCellRecord[]
+        ): Promise<void> => {
           const settings = ServerConnection.makeSettings();
           const kernelUrl = URLExt.join(settings.baseUrl, 'api', 'kernels');
 
@@ -122,14 +167,46 @@ const plugin: JupyterFrontEndPlugin<void> = {
 
           const kernelData = await response.json();
           await sessionContext.changeKernel({ id: kernelData.id });
+
+          // ── Activate Catch-and-Render (Steps 3-6) ──────────────────
+          //
+          // The restored kernel is now connected.  If there were busy
+          // cells at checkpoint time, spin up a RestoreHandler that
+          // hooks iopub and intercepts orphaned messages.
+
+          if (busyCells.length > 0) {
+            console.log(
+              `[kernel-checkpoint] Restore detected ${busyCells.length} ` +
+                'busy cell(s). Activating RestoreHandler.'
+            );
+            const handler = new RestoreHandler();
+            handler.hookRestoredKernel(panel, busyCells);
+          }
         };
+
+        // ── Dialog construction ──────────────────────────────────────
 
         const body = new CheckpointDialogBody({
           namespace: config.namespace,
           kernelId,
           kernelSpecName,
           notebookName,
-          onRestore
+          onRestore,
+          onBeforeCreate: () => {
+            const cellTracker = trackerMap.get(panel.id);
+            if (!cellTracker) {
+              return [];
+            }
+            const busyCells = scanBusyCells(panel, cellTracker);
+            if (busyCells.length > 0) {
+              console.log(
+                `[kernel-checkpoint] Scanned ${busyCells.length} busy cell(s) ` +
+                  'before checkpoint:',
+                busyCells
+              );
+            }
+            return busyCells;
+          }
         });
 
         await showDialog({
@@ -142,9 +219,11 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
-    // Inject a toolbar button into every notebook panel
+    // ── Notebook lifecycle wiring ────────────────────────────────────
+
     notebookTracker.widgetAdded.connect(
       (_sender: INotebookTracker, panel: NotebookPanel) => {
+        // Toolbar button
         const button = new ToolbarButton({
           label: 'Saving Points',
           tooltip: 'Open kernel checkpoint manager',
@@ -153,6 +232,25 @@ const plugin: JupyterFrontEndPlugin<void> = {
           }
         });
         panel.toolbar.insertItem(10, 'kernel-checkpoint', button);
+
+        // Execution tracker setup — connect once the session is ready,
+        // and reconnect whenever the kernel is swapped.
+
+        panel.sessionContext.ready.then(() => {
+          connectTrackerToKernel(panel);
+        });
+
+        panel.sessionContext.kernelChanged.connect(() => {
+          connectTrackerToKernel(panel);
+        });
+
+        panel.disposed.connect(() => {
+          const cellTracker = trackerMap.get(panel.id);
+          if (cellTracker) {
+            cellTracker.disconnectFromKernel();
+            trackerMap.delete(panel.id);
+          }
+        });
       }
     );
   }

@@ -4,6 +4,6 @@ USER root
 
 RUN pip install --upgrade pip
 
-RUN pip install --no-cache-dir kernel-checkpoint==0.1.7
+RUN pip install --no-cache-dir kernel-checkpoint==0.1.8
 
 USER jovyan

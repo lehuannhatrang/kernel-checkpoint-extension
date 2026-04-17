@@ -24,10 +24,23 @@ export interface IResourceRef {
   namespace: string;
 }
 
+/**
+ * Snapshot of a single busy cell captured at checkpoint time.
+ * Maps the kernel's in-flight `msg_id` to the notebook cell so that
+ * orphaned iopub messages can be routed after a restore.
+ */
+export interface IBusyCellRecord {
+  cellIndex: number;
+  cellId: string;
+  msgId: string;
+  executionCount: number | null;
+}
+
 export interface ICheckpointMetadata {
   kernelId: string;
   kernelName: string;
   notebookName: string;
+  busyCells?: IBusyCellRecord[];
 }
 
 export interface ICheckpoint {
@@ -68,5 +81,12 @@ export interface ICheckpointPanelProps {
   kernelId: string;
   kernelSpecName: string;
   notebookName: string;
-  onRestore: (checkpointName: string, checkpointFilePath: string, containerName: string, kernelId: string) => Promise<void>;
+  onRestore: (
+    checkpointName: string,
+    checkpointFilePath: string,
+    containerName: string,
+    kernelId: string,
+    busyCells: IBusyCellRecord[]
+  ) => Promise<void>;
+  onBeforeCreate?: () => IBusyCellRecord[];
 }

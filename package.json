@@ -1,6 +1,6 @@
 {
     "name": "kernel-checkpoint",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "description": "An extension for saving and restoring kernel pod state with jupyter enterprise gateway",
     "keywords": [
         "jupyter",

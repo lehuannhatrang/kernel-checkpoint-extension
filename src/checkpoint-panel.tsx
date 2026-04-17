@@ -19,7 +19,14 @@ function formatDate(iso: string): string {
 }
 
 export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
-  const { namespace, kernelId, kernelSpecName, notebookName, onRestore } = props;
+  const {
+    namespace,
+    kernelId,
+    kernelSpecName,
+    notebookName,
+    onRestore,
+    onBeforeCreate
+  } = props;
 
   const [checkpoints, setCheckpoints] = useState<ICheckpoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,6 +88,7 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
     setCreating(true);
     setFlash(null);
     try {
+      const busyCells = onBeforeCreate ? onBeforeCreate() : [];
       await CheckpointAPI.createCheckpoint({
         name: newName.trim(),
         namespace,
@@ -89,7 +97,8 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
         metadata: {
           kernelId,
           kernelName: kernelSpecName,
-          notebookName
+          notebookName,
+          busyCells
         }
       });
       setNewName('');
@@ -157,7 +166,8 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
       if (!cpKernelId) {
         throw new Error('No kernel ID found in checkpoint metadata');
       }
-      await onRestore(checkpointName, checkpointFile.storagePath, checkpointFile.containerName, cpKernelId);
+      const busyCells = detail.metadata?.busyCells ?? [];
+      await onRestore(checkpointName, checkpointFile.storagePath, checkpointFile.containerName, cpKernelId, busyCells);
       setFlash({
         type: 'success',
         text: `Kernel restored from "${checkpointName}". The kernel is restarting.`
