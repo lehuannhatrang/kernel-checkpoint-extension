@@ -24,6 +24,7 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
     kernelId,
     kernelSpecName,
     notebookName,
+    sessionId,
     onRestore,
     onBeforeCreate
   } = props;
@@ -98,6 +99,7 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
           kernelId,
           kernelName: kernelSpecName,
           notebookName,
+          sessionId,
           busyCells
         }
       });
@@ -166,8 +168,20 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
       if (!cpKernelId) {
         throw new Error('No kernel ID found in checkpoint metadata');
       }
+      // sessionId is optional: checkpoints created before it was tracked will
+      // not carry one, and it is not forwarded to the gateway today.
+      const cpSessionId = detail.metadata?.sessionId ?? '';
+      const cpKernelName = detail.metadata?.kernelName ?? '';
       const busyCells = detail.metadata?.busyCells ?? [];
-      await onRestore(checkpointName, checkpointFile.storagePath, checkpointFile.containerName, cpKernelId, busyCells);
+      await onRestore(
+        checkpointName,
+        checkpointFile.storagePath,
+        checkpointFile.containerName,
+        cpKernelId,
+        cpSessionId,
+        cpKernelName,
+        busyCells
+      );
       setFlash({
         type: 'success',
         text: `Kernel restored from "${checkpointName}". The kernel is restarting.`
@@ -228,6 +242,12 @@ export function CheckpointPanel(props: ICheckpointPanelProps): JSX.Element {
         {!showCreateForm ? (
           <button
             className="kc-btn kc-btn-primary"
+            disabled={!kernelId}
+            title={
+              !kernelId
+                ? 'Start a kernel to create a checkpoint'
+                : 'Save the current kernel state'
+            }
             onClick={() => setShowCreateForm(true)}
           >
             Save Kernel State

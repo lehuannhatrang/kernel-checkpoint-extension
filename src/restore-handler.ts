@@ -1,7 +1,21 @@
+import { ISessionContext } from '@jupyterlab/apputils';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { CodeCell } from '@jupyterlab/cells';
 import { Kernel, KernelMessage } from '@jupyterlab/services';
+import { IChangedArgs } from '@jupyterlab/coreutils';
 import { IBusyCellRecord } from './types';
+
+/**
+ * Verbose restore diagnostics in the browser console. Set to false to silence.
+ */
+const RESTORE_DEBUG = true;
+
+function dbg(...args: unknown[]): void {
+  if (RESTORE_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log('[RestoreHandler]', ...args);
+  }
+}
 
 /**
  * Safely extracts `msg_id` from a kernel message's `parent_header`.
@@ -217,12 +231,25 @@ export class RestoreHandler {
   private _activeMsgIds = new Map<string, IBusyCellRecord>();
   private _panel: NotebookPanel | null = null;
   private _kernel: Kernel.IKernelConnection | null = null;
+  private _sessionContext: ISessionContext | null = null;
+
+  /** True once an iopub listener is attached to a kernel. */
+  get isHooked(): boolean {
+    return this._kernel !== null;
+  }
 
   /**
-   * Begin intercepting orphaned messages for the given busy cells.
-   * Call immediately after `sessionContext.changeKernel()` resolves.
+   * Arm the handler BEFORE calling `sessionContext.changeKernel()`.
+   *
+   * The Jupyter server buffers a kernel's iopub while no client websocket is
+   * attached and replays that backlog the instant a websocket opens. If we
+   * only hooked after `changeKernel()` resolved (i.e. after the socket had
+   * already opened) we would miss the replayed output of the in-flight cell.
+   * Listening on `kernelChanged` here lets us attach the iopub listener the
+   * moment the new KernelConnection is created — before its websocket opens.
    */
-  hookRestoredKernel(
+  arm(
+    sessionContext: ISessionContext,
     panel: NotebookPanel,
     busyCells: IBusyCellRecord[]
   ): void {
@@ -232,6 +259,7 @@ export class RestoreHandler {
 
     this.dispose();
     this._panel = panel;
+    this._sessionContext = sessionContext;
 
     for (const record of busyCells) {
       this._activeMsgIds.set(record.msgId, record);
@@ -243,29 +271,70 @@ export class RestoreHandler {
       const cell = this._findCell(panel, record);
       if (cell) {
         cell.model.executionCount = null;
+      } else {
+        dbg(
+          `WARNING: cell[${record.cellIndex}] (${record.cellId}) not found ` +
+            'when arming; the open notebook may differ from the checkpointed one.'
+        );
       }
     }
 
-    const kernel = panel.sessionContext.session?.kernel;
-    if (!kernel) {
-      console.warn(
-        '[RestoreHandler] No kernel on panel after changeKernel(); ' +
-          'cannot hook iopub. Orphaned outputs will be lost.'
-      );
+    dbg(
+      `Armed for ${busyCells.length} busy cell(s):`,
+      busyCells.map(r => `cell[${r.cellIndex}] (${r.cellId}) -> ${r.msgId}`)
+    );
+
+    sessionContext.kernelChanged.connect(this._onKernelChanged, this);
+  }
+
+  private _onKernelChanged(
+    _sender: ISessionContext,
+    args: IChangedArgs<
+      Kernel.IKernelConnection | null,
+      Kernel.IKernelConnection | null,
+      'kernel'
+    >
+  ): void {
+    const kernel = args.newValue;
+    if (kernel) {
+      this._hookKernel(kernel);
+    }
+  }
+
+  /**
+   * Directly hook a kernel's iopub channel. Fallback for when `kernelChanged`
+   * did not fire (e.g. the restored kernel was already attached).
+   */
+  hookKernel(kernel: Kernel.IKernelConnection): void {
+    this._hookKernel(kernel);
+  }
+
+  private _hookKernel(kernel: Kernel.IKernelConnection): void {
+    if (this._kernel === kernel) {
       return;
     }
-
+    if (this._kernel) {
+      this._kernel.iopubMessage.disconnect(this._onIopubMessage, this);
+    }
     this._kernel = kernel;
     kernel.iopubMessage.connect(this._onIopubMessage, this);
 
-    console.log(
-      `[RestoreHandler] Hooked into restored kernel iopub. ` +
-        `Tracking ${busyCells.length} busy cell(s):`,
-      busyCells.map(r => `cell[${r.cellIndex}] (${r.cellId}) → ${r.msgId}`)
+    dbg(
+      `Hooked kernel ${kernel.id} (status=${kernel.status}, ` +
+        `connection=${kernel.connectionStatus}). Tracking ` +
+        `${this._activeMsgIds.size} msg_id(s):`,
+      Array.from(this._activeMsgIds.keys())
     );
   }
 
   dispose(): void {
+    if (this._sessionContext) {
+      this._sessionContext.kernelChanged.disconnect(
+        this._onKernelChanged,
+        this
+      );
+      this._sessionContext = null;
+    }
     if (this._kernel) {
       this._kernel.iopubMessage.disconnect(this._onIopubMessage, this);
       this._kernel = null;
@@ -321,6 +390,12 @@ export class RestoreHandler {
     if (!record) {
       // Not one of our tracked orphaned executions — let JupyterLab's
       // normal future-based routing handle this message.
+      const tracked =
+        Array.from(this._activeMsgIds.keys()).join(', ') || 'none';
+      dbg(
+        `iopub ${msg.header.msg_type} parent=${parentMsgId} — no match ` +
+          `(tracking: ${tracked})`
+      );
       return;
     }
 
@@ -330,8 +405,17 @@ export class RestoreHandler {
 
     const codeCell = this._findCell(this._panel, record);
     if (!codeCell) {
+      dbg(
+        `MATCH ${msg.header.msg_type} for msg ${parentMsgId} but cell` +
+          `[${record.cellIndex}] (${record.cellId}) not found in notebook.`
+      );
       return;
     }
+
+    dbg(
+      `MATCH iopub ${msg.header.msg_type} -> cell[${record.cellIndex}] ` +
+        `(${record.cellId})`
+    );
 
     const msgType = msg.header.msg_type;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

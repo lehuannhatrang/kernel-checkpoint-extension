@@ -40,6 +40,7 @@ export interface ICheckpointMetadata {
   kernelId: string;
   kernelName: string;
   notebookName: string;
+  sessionId: string;
   busyCells?: IBusyCellRecord[];
 }
 
@@ -81,11 +82,14 @@ export interface ICheckpointPanelProps {
   kernelId: string;
   kernelSpecName: string;
   notebookName: string;
+  sessionId: string;
   onRestore: (
     checkpointName: string,
     checkpointFilePath: string,
     containerName: string,
     kernelId: string,
+    sessionId: string,
+    kernelName: string,
     busyCells: IBusyCellRecord[]
   ) => Promise<void>;
   onBeforeCreate?: () => IBusyCellRecord[];
